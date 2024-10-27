@@ -196,29 +196,20 @@ impl LanguageServer for Backend {
         params: DocumentDiagnosticParams,
     ) -> Result<DocumentDiagnosticReportResult> {
         let docs = self.documents.read().unwrap();
-        match docs.get(&params.text_document.uri) {
-            Some(_text) => {
-                return Ok(DocumentDiagnosticReportResult::Report(
-                    DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
-                        full_document_diagnostic_report: FullDocumentDiagnosticReport {
-                            items: self.perform_diagnostics(),
-                            ..FullDocumentDiagnosticReport::default()
-                        },
-                        ..RelatedFullDocumentDiagnosticReport::default()
-                    }),
-                ));
-            }
-            None => {
-                return Ok(DocumentDiagnosticReportResult::Report(
-                    DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
-                        full_document_diagnostic_report: FullDocumentDiagnosticReport {
-                            items: vec![],
-                            ..FullDocumentDiagnosticReport::default()
-                        },
-                        ..RelatedFullDocumentDiagnosticReport::default()
-                    }),
-                ))
-            }
+
+        let diagnostics = match docs.get(&params.text_document.uri) {
+            Some(_text) => self.perform_diagnostics(),
+            None => vec![],
         };
+
+        return Ok(DocumentDiagnosticReportResult::Report(
+            DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+                full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                    items: diagnostics,
+                    ..FullDocumentDiagnosticReport::default()
+                },
+                ..RelatedFullDocumentDiagnosticReport::default()
+            }),
+        ));
     }
 }
