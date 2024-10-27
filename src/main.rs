@@ -4,6 +4,8 @@ use tower_lsp::{LspService, Server};
 mod backend;
 use backend::Backend;
 
+mod parser;
+
 /// tsm-language-server
 #[derive(Parser, Debug)]
 #[command(version,about,long_about=None)]

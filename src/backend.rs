@@ -1,21 +1,15 @@
+use crate::parser::LspParser;
 use crate::CliArgs;
 use std::collections::HashMap;
-use std::ffi::OsString;
-use std::fs;
 use std::sync::{Arc, RwLock};
+use std::{env, fs};
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Parser, Tree};
-
-pub struct Doc {
-    text: String,
-    ast: Option<Tree>,
-}
+use tower_lsp::Client;
+use tower_lsp::{lsp_types::*, LanguageServer};
 
 pub struct Backend {
     client: Client,
-    documents: Arc<RwLock<HashMap<Url, Doc>>>, // To store opened documents
+    documents: Arc<RwLock<HashMap<Url, String>>>, // To store opened documents
     args: CliArgs,
 }
 
@@ -28,40 +22,35 @@ impl Backend {
         }
     }
 
-    fn get_files(root: &str) -> Vec<OsString> {
+    fn get_files(root: &str) -> Vec<String> {
         match fs::read_dir(root) {
             Ok(paths) => paths
                 .into_iter()
                 .filter_map(|e| e.ok())
-                .map(|d| d.file_name())
-                .collect::<Vec<OsString>>(),
+                .map(|d| d.file_name().to_string_lossy().to_string())
+                .collect::<Vec<String>>(),
             Err(_) => vec![],
         }
     }
 
-    // Custom function to generate diagnostics based on text content
-    fn perform_diagnostics(&self, text: String) -> Vec<Diagnostic> {
-        if text.contains("error") {
-            vec![Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 0,
-                        character: 5,
-                    },
+    fn perform_diagnostics(&self) -> Vec<Diagnostic> {
+        vec![Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
                 },
-                severity: Some(DiagnosticSeverity::INFORMATION),
-                code: Some(NumberOrString::String("100".into())),
-                source: Some("tsm-language-server".into()),
-                message: "Found the word 'error'.".into(),
-                ..Diagnostic::default()
-            }]
-        } else {
-            vec![]
-        }
+                end: Position {
+                    line: 0,
+                    character: 5,
+                },
+            },
+            severity: Some(DiagnosticSeverity::INFORMATION),
+            code: Some(NumberOrString::String("100".into())),
+            source: Some("tsm-language-server".into()),
+            message: "Found the word 'error'.".into(),
+            ..Diagnostic::default()
+        }]
     }
 }
 
@@ -69,9 +58,9 @@ trait ConvertToCompletionItem {
     fn to_completionitem(&self) -> Option<CompletionItem>;
 }
 
-impl ConvertToCompletionItem for OsString {
+impl ConvertToCompletionItem for String {
     fn to_completionitem(&self) -> Option<CompletionItem> {
-        let label = self.to_string_lossy().to_string();
+        let label = self;
         let mut item = CompletionItem::new_simple(label.clone(), "Directory".to_string());
         item.kind = Some(CompletionItemKind::FOLDER);
         item.insert_text = Some(format!("\"{}\"", label));
@@ -102,12 +91,22 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "server initialized!")
-            .await;
+        let cli_args: Vec<String> = env::args().collect();
+
+        {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("Server initialized with arguments {:?}", cli_args),
+                )
+                .await;
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {
+        let docs = self.documents.write();
+        docs.unwrap().clear();
+
         Ok(())
     }
 
@@ -121,7 +120,6 @@ impl LanguageServer for Backend {
         };
 
         let wanted_line = content
-            .text
             .split_terminator("\n")
             .enumerate()
             .find(|(_line_no, line_content)| line_content.contains(self.args.prefix.as_str()));
@@ -145,43 +143,47 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let docs = self.documents.write();
-        docs.unwrap().insert(
-            params.text_document.uri,
-            Doc {
-                text: params.text_document.text,
-                ast: None,
-            },
-        );
+        docs.unwrap()
+            .insert(params.text_document.uri, params.text_document.text.clone());
+
+        let used_folders = LspParser::parse_code(params.text_document.text.as_str());
+        let available_folders = Backend::get_files(&self.args.suggestionsdir);
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "Used folders: {:?}\nAvailable folders: {:?}",
+                    used_folders, available_folders
+                ),
+            )
+            .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        let docs = self.documents.write();
-        let text = &params.content_changes.first().unwrap().text;
-
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
-            .expect("Error loading typescript grammar");
-        let tree = parser.parse(text, None);
-
-        docs.unwrap().insert(
-            params.text_document.uri,
-            Doc {
-                text: text.to_string(),
-                ast: tree.clone(),
-            },
-        );
-
         {
-            if tree.clone().is_some() {
-                self.client
-                    .log_message(
-                        MessageType::INFO,
-                        format!("AST: {}", tree.unwrap().root_node()),
-                    )
-                    .await;
-            }
+            let docs = self.documents.write();
+            let text = &params.content_changes.first().unwrap().text;
+
+            docs.unwrap()
+                .insert(params.text_document.uri.clone(), text.to_string());
         }
+
+        let used_folders = LspParser::parse_code(&params.content_changes.first().unwrap().text);
+        let available_folders = Backend::get_files(&self.args.suggestionsdir);
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "Used folders: {:?}\nAvailable folders: {:?}",
+                    used_folders, available_folders
+                ),
+            )
+            .await;
+        self.client
+            .publish_diagnostics(params.text_document.uri, self.perform_diagnostics(), None)
+            .await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -195,11 +197,11 @@ impl LanguageServer for Backend {
     ) -> Result<DocumentDiagnosticReportResult> {
         let docs = self.documents.read().unwrap();
         match docs.get(&params.text_document.uri) {
-            Some(text) => {
+            Some(_text) => {
                 return Ok(DocumentDiagnosticReportResult::Report(
                     DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
                         full_document_diagnostic_report: FullDocumentDiagnosticReport {
-                            items: self.perform_diagnostics(text.text.clone()),
+                            items: self.perform_diagnostics(),
                             ..FullDocumentDiagnosticReport::default()
                         },
                         ..RelatedFullDocumentDiagnosticReport::default()
