@@ -143,8 +143,10 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let docs = self.documents.write();
+        let uri = params.text_document.uri;
+
         docs.unwrap()
-            .insert(params.text_document.uri, params.text_document.text.clone());
+            .insert(uri.to_owned(), params.text_document.text.clone());
 
         let used_folders = LspParser::parse_code(params.text_document.text.as_str());
         let available_folders = Backend::get_files(&self.args.suggestionsdir);
@@ -157,6 +159,10 @@ impl LanguageServer for Backend {
                     used_folders, available_folders
                 ),
             )
+            .await;
+
+        self.client
+            .publish_diagnostics(uri, self.perform_diagnostics(), None)
             .await;
     }
 
@@ -181,6 +187,7 @@ impl LanguageServer for Backend {
                 ),
             )
             .await;
+
         self.client
             .publish_diagnostics(params.text_document.uri, self.perform_diagnostics(), None)
             .await;
