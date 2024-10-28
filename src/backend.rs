@@ -75,6 +75,40 @@ impl Backend {
             })
             .collect()
     }
+
+    fn get_quickfix_for_diagnostic(
+        &self,
+        diagnostic: &Diagnostic,
+        uri: &Url,
+    ) -> Option<CodeAction> {
+        // Check the diagnostic's message, range, or code to determine if a quickfix applies
+        if diagnostic.message.contains("is not a valid folder") {
+            // Define the text edit for the quickfix
+            let edit = TextEdit {
+                range: diagnostic.range,
+                new_text: "corrected_code".to_string(),
+            };
+
+            // Create a workspace edit to apply the text edit
+            let edit = WorkspaceEdit {
+                changes: Some(vec![(uri.clone(), vec![edit])].into_iter().collect()),
+                ..Default::default()
+            };
+
+            // Build the code action with the edit
+            let code_action = CodeAction {
+                title: "Apply quickfix".to_string(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diagnostic.clone()]),
+                edit: Some(edit),
+                ..Default::default()
+            };
+
+            return Some(code_action);
+        }
+
+        None
+    }
 }
 
 trait ConvertToCompletionItem {
@@ -97,6 +131,7 @@ impl LanguageServer for Backend {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 completion_provider: Some(CompletionOptions::default()),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
                     DiagnosticOptions {
                         inter_file_dependencies: false,
@@ -249,5 +284,23 @@ impl LanguageServer for Backend {
                 ..RelatedFullDocumentDiagnosticReport::default()
             }),
         ));
+    }
+
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> Result<Option<Vec<CodeActionOrCommand>>> {
+        let mut actions = Vec::new();
+
+        // Loop through diagnostics in the current document
+        for diagnostic in &params.context.diagnostics {
+            if let Some(fix) =
+                self.get_quickfix_for_diagnostic(diagnostic, &params.text_document.uri)
+            {
+                actions.push(CodeActionOrCommand::CodeAction(fix));
+            }
+        }
+
+        Ok(Some(actions))
     }
 }
