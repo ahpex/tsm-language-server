@@ -33,24 +33,31 @@ impl Backend {
         }
     }
 
-    fn perform_diagnostics(&self) -> Vec<Diagnostic> {
-        vec![Diagnostic {
-            range: Range {
-                start: Position {
-                    line: 0,
-                    character: 0,
+    fn perform_diagnostics(&self, source_code: &str) -> Vec<Diagnostic> {
+        let used_folders = LspParser::parse_code(source_code);
+        let available_folders = Backend::get_files(&self.args.suggestionsdir);
+
+        used_folders
+            .iter()
+            .filter(|af| !available_folders.contains(af))
+            .map(|invalid_folder| Diagnostic {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 5,
+                    },
                 },
-                end: Position {
-                    line: 0,
-                    character: 5,
-                },
-            },
-            severity: Some(DiagnosticSeverity::INFORMATION),
-            code: Some(NumberOrString::String("100".into())),
-            source: Some("tsm-language-server".into()),
-            message: "Found the word 'error'.".into(),
-            ..Diagnostic::default()
-        }]
+                severity: Some(DiagnosticSeverity::ERROR),
+                code: Some(NumberOrString::String("100".into())),
+                source: Some("tsm-language-server".into()),
+                message: format!("'{}' is not a valid folder", invalid_folder),
+                ..Diagnostic::default()
+            })
+            .collect()
     }
 }
 
@@ -162,7 +169,11 @@ impl LanguageServer for Backend {
             .await;
 
         self.client
-            .publish_diagnostics(uri, self.perform_diagnostics(), None)
+            .publish_diagnostics(
+                uri,
+                self.perform_diagnostics(params.text_document.text.as_str()),
+                None,
+            )
             .await;
     }
 
@@ -189,7 +200,11 @@ impl LanguageServer for Backend {
             .await;
 
         self.client
-            .publish_diagnostics(params.text_document.uri, self.perform_diagnostics(), None)
+            .publish_diagnostics(
+                params.text_document.uri,
+                self.perform_diagnostics(params.content_changes.first().unwrap().text.as_str()),
+                None,
+            )
             .await;
     }
 
@@ -205,7 +220,7 @@ impl LanguageServer for Backend {
         let docs = self.documents.read().unwrap();
 
         let diagnostics = match docs.get(&params.text_document.uri) {
-            Some(_text) => self.perform_diagnostics(),
+            Some(source_code) => self.perform_diagnostics(source_code),
             None => vec![],
         };
 
