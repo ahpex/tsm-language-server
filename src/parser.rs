@@ -1,4 +1,10 @@
-use tree_sitter::{Parser, Query, QueryCursor};
+use tree_sitter::{Parser, Point, Query, QueryCursor};
+
+#[derive(Debug)]
+pub struct PositionalText {
+    pub text: String,
+    pub position: Point,
+}
 
 pub struct LspParser {}
 
@@ -12,7 +18,7 @@ impl LspParser {
         Self::node_text(node, src)
     }
 
-    pub fn parse_code(source_code: &str) -> Vec<String> {
+    pub fn parse_code(source_code: &str) -> Vec<PositionalText> {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_typescript::language_typescript())
@@ -40,9 +46,12 @@ impl LspParser {
                 m.captures
                     .iter()
                     .filter(|cap| cap.index == array_item_index)
-                    .map(|cap| Self::node_string(cap.node, source_code))
+                    .map(|cap| PositionalText {
+                        text: Self::node_string(cap.node, source_code),
+                        position: cap.node.start_position(),
+                    })
             })
-            .collect::<Vec<String>>()
+            .collect::<Vec<PositionalText>>()
     }
 }
 
@@ -59,7 +68,7 @@ mod tests {
 
         let used_folders = LspParser::parse_code(source_code);
         assert_eq!(2, used_folders.len());
-        assert_eq!("dir_a", used_folders[0]);
-        assert_eq!("dir_b", used_folders[1]);
+        assert_eq!("dir_a", used_folders[0].text);
+        assert_eq!("dir_b", used_folders[1].text);
     }
 }

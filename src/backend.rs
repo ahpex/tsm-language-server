@@ -39,22 +39,22 @@ impl Backend {
 
         used_folders
             .iter()
-            .filter(|af| !available_folders.contains(af))
+            .filter(|used_folder| !available_folders.contains(&used_folder.text))
             .map(|invalid_folder| Diagnostic {
                 range: Range {
                     start: Position {
-                        line: 0,
-                        character: 0,
+                        line: invalid_folder.position.row as u32,
+                        character: invalid_folder.position.column as u32,
                     },
                     end: Position {
-                        line: 0,
-                        character: 5,
+                        line: invalid_folder.position.row as u32,
+                        character: invalid_folder.position.column as u32 + 1,
                     },
                 },
                 severity: Some(DiagnosticSeverity::ERROR),
                 code: Some(NumberOrString::String("100".into())),
                 source: Some("tsm-language-server".into()),
-                message: format!("'{}' is not a valid folder", invalid_folder),
+                message: format!("'{}' is not a valid folder", invalid_folder.text),
                 ..Diagnostic::default()
             })
             .collect()
