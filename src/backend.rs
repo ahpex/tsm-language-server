@@ -75,40 +75,6 @@ impl Backend {
             })
             .collect()
     }
-
-    fn get_quickfix_for_diagnostic(
-        &self,
-        diagnostic: &Diagnostic,
-        uri: &Url,
-    ) -> Option<CodeAction> {
-        // Check the diagnostic's message, range, or code to determine if a quickfix applies
-        if diagnostic.message.contains("is not a valid folder") {
-            // Define the text edit for the quickfix
-            let edit = TextEdit {
-                range: diagnostic.range,
-                new_text: "corrected_code".to_string(),
-            };
-
-            // Create a workspace edit to apply the text edit
-            let edit = WorkspaceEdit {
-                changes: Some(vec![(uri.clone(), vec![edit])].into_iter().collect()),
-                ..Default::default()
-            };
-
-            // Build the code action with the edit
-            let code_action = CodeAction {
-                title: "Apply quickfix".to_string(),
-                kind: Some(CodeActionKind::QUICKFIX),
-                diagnostics: Some(vec![diagnostic.clone()]),
-                edit: Some(edit),
-                ..Default::default()
-            };
-
-            return Some(code_action);
-        }
-
-        None
-    }
 }
 
 trait ConvertToCompletionItem {
@@ -290,14 +256,45 @@ impl LanguageServer for Backend {
         &self,
         params: CodeActionParams,
     ) -> Result<Option<Vec<CodeActionOrCommand>>> {
-        let mut actions = Vec::new();
+        let available_folders = Backend::get_files(&self.args.suggestionsdir);
+        let mut actions: Vec<CodeActionOrCommand> = Vec::new();
 
         // Loop through diagnostics in the current document
         for diagnostic in &params.context.diagnostics {
-            if let Some(fix) =
-                self.get_quickfix_for_diagnostic(diagnostic, &params.text_document.uri)
-            {
-                actions.push(CodeActionOrCommand::CodeAction(fix));
+            for folder in available_folders.iter() {
+                // if let Some(fix) =
+                //     self.get_quickfix_for_diagnostic(diagnostic, &params.text_document.uri)
+                // {
+                //     actions.push(CodeActionOrCommand::CodeAction(fix));
+                // }
+                // Define the text edit for the quickfix
+                let edit = TextEdit {
+                    range: diagnostic.range,
+                    new_text: folder.to_string(),
+                };
+
+                // Create a workspace edit to apply the text edit
+                let edit = WorkspaceEdit {
+                    changes: Some(
+                        vec![(params.text_document.uri.clone(), vec![edit])]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..Default::default()
+                };
+
+                // Build the code action with the edit
+                let code_action = CodeAction {
+                    title: format!("Use folder {}", folder),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(vec![diagnostic.clone()]),
+                    edit: Some(edit),
+                    ..Default::default()
+                };
+
+                actions.push(tower_lsp::lsp_types::CodeActionOrCommand::CodeAction(
+                    code_action,
+                ));
             }
         }
 
