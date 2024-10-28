@@ -4,8 +4,29 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::{env, fs};
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::Client;
+use tower_lsp::{lsp_types, Client};
 use tower_lsp::{lsp_types::*, LanguageServer};
+
+pub struct MyRange(pub tree_sitter::Range);
+
+impl From<MyRange> for lsp_types::Range {
+    fn from(value: MyRange) -> Self {
+        lsp_types::Range {
+            start: {
+                Position {
+                    line: value.0.start_point.row as u32,
+                    character: value.0.start_point.column as u32,
+                }
+            },
+            end: {
+                Position {
+                    line: value.0.end_point.row as u32,
+                    character: value.0.end_point.column as u32,
+                }
+            },
+        }
+    }
+}
 
 pub struct Backend {
     client: Client,
@@ -41,20 +62,15 @@ impl Backend {
             .iter()
             .filter(|used_folder| !available_folders.contains(&used_folder.text))
             .map(|invalid_folder| Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: invalid_folder.position.row as u32,
-                        character: invalid_folder.position.column as u32,
-                    },
-                    end: Position {
-                        line: invalid_folder.position.row as u32,
-                        character: invalid_folder.position.column as u32 + 1,
-                    },
-                },
+                range: MyRange(invalid_folder.range).into(),
                 severity: Some(DiagnosticSeverity::ERROR),
                 code: Some(NumberOrString::String("100".into())),
                 source: Some("tsm-language-server".into()),
-                message: format!("'{}' is not a valid folder", invalid_folder.text),
+                message: format!(
+                    "'{}' is not a valid folder, valid folders are {}",
+                    invalid_folder.text,
+                    available_folders.join(", ")
+                ),
                 ..Diagnostic::default()
             })
             .collect()

@@ -1,9 +1,9 @@
-use tree_sitter::{Parser, Point, Query, QueryCursor};
+use tree_sitter::{Parser, Query, QueryCursor, Range};
 
 #[derive(Debug)]
 pub struct PositionalText {
     pub text: String,
-    pub position: Point,
+    pub range: Range,
 }
 
 pub struct LspParser {}
@@ -48,7 +48,7 @@ impl LspParser {
                     .filter(|cap| cap.index == array_item_index)
                     .map(|cap| PositionalText {
                         text: Self::node_string(cap.node, source_code),
-                        position: cap.node.start_position(),
+                        range: cap.node.range(),
                     })
             })
             .collect::<Vec<PositionalText>>()
