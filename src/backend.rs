@@ -34,6 +34,7 @@ pub struct Backend {
     client: Client,
     documents: Arc<RwLock<HashMap<Url, String>>>, // To store opened documents
     args: CliArgs,
+    push_diagnostics: Arc<RwLock<bool>>,
 }
 
 impl Backend {
@@ -42,6 +43,7 @@ impl Backend {
             client,
             documents: Arc::new(RwLock::new(HashMap::new())),
             args,
+            push_diagnostics: Arc::new(RwLock::new(false)),
         }
     }
 
@@ -113,7 +115,19 @@ impl ConvertToCompletionItem for String {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        let push_diagnostics = params
+            .capabilities
+            .text_document
+            .as_ref()
+            .map(|td| td.publish_diagnostics.is_some())
+            .is_some();
+
+        {
+            let mut push_diag = self.push_diagnostics.write().unwrap();
+            *push_diag = push_diagnostics;
+        }
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 completion_provider: Some(CompletionOptions::default()),
@@ -196,26 +210,20 @@ impl LanguageServer for Backend {
         docs.unwrap()
             .insert(uri.to_owned(), params.text_document.text.clone());
 
-        let used_folders = LspParser::parse_code(params.text_document.text.as_str());
-        let available_folders = Backend::get_files(&self.args.suggestionsdir);
+        let push_diagnostics = {
+            let push_diag = self.push_diagnostics.read().unwrap();
+            *push_diag
+        };
 
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!(
-                    "Used folders: {:?}\nAvailable folders: {:?}",
-                    used_folders, available_folders
-                ),
-            )
-            .await;
-
-        self.client
-            .publish_diagnostics(
-                uri,
-                self.perform_diagnostics(params.text_document.text.as_str()),
-                None,
-            )
-            .await;
+        if push_diagnostics {
+            self.client
+                .publish_diagnostics(
+                    uri,
+                    self.perform_diagnostics(params.text_document.text.as_str()),
+                    None,
+                )
+                .await;
+        }
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -231,26 +239,20 @@ impl LanguageServer for Backend {
             }
         }
 
-        let used_folders = LspParser::parse_code(&params.content_changes.first().unwrap().text);
-        let available_folders = Backend::get_files(&self.args.suggestionsdir);
+        let push_diagnostics = {
+            let push_diag = self.push_diagnostics.read().unwrap();
+            *push_diag
+        };
 
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!(
-                    "Used folders: {:?}\nAvailable folders: {:?}",
-                    used_folders, available_folders
-                ),
-            )
-            .await;
-
-        self.client
-            .publish_diagnostics(
-                params.text_document.uri,
-                self.perform_diagnostics(params.content_changes.first().unwrap().text.as_str()),
-                None,
-            )
-            .await;
+        if push_diagnostics {
+            self.client
+                .publish_diagnostics(
+                    params.text_document.uri,
+                    self.perform_diagnostics(params.content_changes.first().unwrap().text.as_str()),
+                    None,
+                )
+                .await;
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
