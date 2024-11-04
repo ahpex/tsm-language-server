@@ -1,5 +1,8 @@
 use crate::parser::LspParser;
 use crate::CliArgs;
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
+use serde_json;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::{env, fs};
@@ -71,9 +74,28 @@ impl Backend {
                     invalid_folder.text,
                     available_folders.join(", ")
                 ),
+                data: Some(serde_json::value::Value::String(
+                    invalid_folder.text.clone(),
+                )),
                 ..Diagnostic::default()
             })
             .collect()
+    }
+
+    fn get_best_matches(user_input: &str, possible_matches: &[&str], top_n: usize) -> Vec<String> {
+        let matcher = SkimMatcherV2::default();
+        let mut matches_with_scores: Vec<(&str, i64)> = possible_matches
+            .iter()
+            .filter_map(|&s| matcher.fuzzy_match(s, user_input).map(|score| (s, score)))
+            .collect();
+
+        matches_with_scores.sort_by(|a, b| b.1.cmp(&a.1));
+
+        matches_with_scores
+            .into_iter()
+            .take(top_n)
+            .map(|(s, _)| s.to_string())
+            .collect::<Vec<String>>()
     }
 }
 
@@ -129,7 +151,10 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> Result<()> {
         let docs = self.documents.write();
-        docs.unwrap().clear();
+
+        if let Ok(mut docs) = docs {
+            docs.clear();
+        }
 
         Ok(())
     }
@@ -196,11 +221,15 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         {
-            let docs = self.documents.write();
-            let text = &params.content_changes.first().unwrap().text;
+            // capabilities are configured with TextDocumentSyncKind::FULL, so we know that the first change is the full content
+            let text = match params.content_changes.first() {
+                Some(change) => change.text.clone(),
+                None => return,
+            };
 
-            docs.unwrap()
-                .insert(params.text_document.uri.clone(), text.to_string());
+            if let Ok(mut docs) = self.documents.write() {
+                docs.insert(params.text_document.uri.clone(), text);
+            }
         }
 
         let used_folders = LspParser::parse_code(&params.content_changes.first().unwrap().text);
@@ -256,21 +285,21 @@ impl LanguageServer for Backend {
         &self,
         params: CodeActionParams,
     ) -> Result<Option<Vec<CodeActionOrCommand>>> {
-        let available_folders = Backend::get_files(&self.args.suggestionsdir);
+        let folders = Backend::get_files(&self.args.suggestionsdir);
+        let available_folders: Vec<&str> = folders.iter().map(|s| s.as_str()).collect();
         let mut actions: Vec<CodeActionOrCommand> = Vec::new();
 
         // Loop through diagnostics in the current document
         for diagnostic in &params.context.diagnostics {
-            for folder in available_folders.iter() {
-                // if let Some(fix) =
-                //     self.get_quickfix_for_diagnostic(diagnostic, &params.text_document.uri)
-                // {
-                //     actions.push(CodeActionOrCommand::CodeAction(fix));
-                // }
-                // Define the text edit for the quickfix
+            let data = diagnostic.data.as_ref().unwrap().clone();
+            let user_input = data.as_str().unwrap();
+
+            let best_matches = Backend::get_best_matches(user_input, &available_folders, 15);
+
+            for best_match in best_matches {
                 let edit = TextEdit {
                     range: diagnostic.range,
-                    new_text: folder.to_string(),
+                    new_text: best_match.to_string(),
                 };
 
                 // Create a workspace edit to apply the text edit
@@ -285,7 +314,7 @@ impl LanguageServer for Backend {
 
                 // Build the code action with the edit
                 let code_action = CodeAction {
-                    title: format!("Use folder {}", folder),
+                    title: format!("Use folder {}", best_match),
                     kind: Some(CodeActionKind::QUICKFIX),
                     diagnostics: Some(vec![diagnostic.clone()]),
                     edit: Some(edit),
