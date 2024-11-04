@@ -106,7 +106,7 @@ impl ConvertToCompletionItem for String {
         let label = self;
         let mut item = CompletionItem::new_simple(label.clone(), "Directory".to_string());
         item.kind = Some(CompletionItemKind::FOLDER);
-        item.insert_text = Some(format!("\"{}\"", label));
+        item.insert_text = Some(label.into());
         Some(item)
     }
 }
@@ -168,26 +168,25 @@ impl LanguageServer for Backend {
             }
         };
 
-        let wanted_line = content
-            .split_terminator("\n")
-            .enumerate()
-            .find(|(_line_no, line_content)| line_content.contains(self.args.prefix.as_str()));
+        let all_items: Vec<crate::parser::PositionalText> = LspParser::parse_code(content);
+        let all_completions = all_items
+            .iter()
+            .find(|item| {
+                item.range.start_point.row == params.text_document_position.position.line as usize
+                    && (item.range.start_point.column
+                        < params.text_document_position.position.character as usize
+                        && item.range.end_point.column
+                            > params.text_document_position.position.character as usize)
+            })
+            .map(|_item_at_position| {
+                let completions = Backend::get_files(&self.args.suggestionsdir)
+                    .iter()
+                    .map(|name| name.to_completionitem().unwrap())
+                    .collect::<Vec<CompletionItem>>();
+                CompletionResponse::Array(completions)
+            });
 
-        match wanted_line {
-            Some((line_no, _line_content)) => {
-                let wanted_line_no: u32 = line_no.try_into().unwrap();
-                if params.text_document_position.position.line == wanted_line_no {
-                    let completions = Backend::get_files(&self.args.suggestionsdir)
-                        .iter()
-                        .map(|name| name.to_completionitem().unwrap())
-                        .collect::<Vec<CompletionItem>>();
-                    return Ok(Some(CompletionResponse::Array(completions)));
-                } else {
-                    return Ok(None);
-                }
-            }
-            None => return Ok(None),
-        };
+        Ok(all_completions)
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -291,7 +290,11 @@ impl LanguageServer for Backend {
 
         // Loop through diagnostics in the current document
         for diagnostic in &params.context.diagnostics {
-            let data = diagnostic.data.as_ref().unwrap().clone();
+            let data = diagnostic
+                .data
+                .as_ref()
+                .unwrap_or(&serde_json::to_value("").unwrap())
+                .clone();
             let user_input = data.as_str().unwrap();
 
             let best_matches = Backend::get_best_matches(user_input, &available_folders, 15);
@@ -299,7 +302,7 @@ impl LanguageServer for Backend {
             for best_match in best_matches {
                 let edit = TextEdit {
                     range: diagnostic.range,
-                    new_text: best_match.to_string(),
+                    new_text: format!("\"{}\"", best_match),
                 };
 
                 // Create a workspace edit to apply the text edit
