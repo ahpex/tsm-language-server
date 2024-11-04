@@ -2,7 +2,6 @@ use crate::parser::LspParser;
 use crate::CliArgs;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
-use serde_json;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::{env, fs};
@@ -70,9 +69,8 @@ impl Backend {
                 code: Some(NumberOrString::String("100".into())),
                 source: Some("tsm-language-server".into()),
                 message: format!(
-                    "'{}' is not a valid folder, valid folders are {}",
-                    invalid_folder.text,
-                    available_folders.join(", ")
+                    "'{}' is not a valid folder, valid folders are those in '{}'",
+                    invalid_folder.text, self.args.suggestionsdir
                 ),
                 data: Some(serde_json::value::Value::String(
                     invalid_folder.text.clone(),
@@ -150,9 +148,7 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        let docs = self.documents.write();
-
-        if let Ok(mut docs) = docs {
+        if let Ok(mut docs) = self.documents.write() {
             docs.clear();
         }
 
@@ -160,7 +156,11 @@ impl LanguageServer for Backend {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let docs = self.documents.read().unwrap();
+        let docs = match self.documents.read() {
+            Ok(docs) => docs,
+            Err(_) => return Ok(None),
+        };
+
         let content = match docs.get(&params.text_document_position.text_document.uri) {
             Some(text) => text,
             None => {

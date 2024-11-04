@@ -11,7 +11,10 @@ pub struct LspParser {}
 impl LspParser {
     /// Extract the text of tree-sitter captured node from source.
     fn node_text(node: tree_sitter::Node, src: &str) -> String {
-        src[node.start_byte()..node.end_byte()].to_string()
+        src[node.start_byte()..node.end_byte()]
+            .to_string()
+            .trim_matches('"')
+            .into()
     }
 
     pub(crate) fn node_string(node: tree_sitter::Node, src: &str) -> String {
@@ -28,7 +31,7 @@ impl LspParser {
         let user_query = r#"
             (variable_declarator
             name: ((identifier) @id (#eq? @id "folders"))
-            value: ((array ((string ((string_fragment) @item))))))
+            value: ((array ((string) @item))))
         "#;
         let query = Query::new(&tree_sitter_typescript::language_typescript(), user_query).unwrap();
 
@@ -70,5 +73,16 @@ mod tests {
         assert_eq!(2, used_folders.len());
         assert_eq!("dir_a", used_folders[0].text);
         assert_eq!("dir_b", used_folders[1].text);
+    }
+
+    #[test]
+    fn test_empty_string() {
+        let source_code = r#"
+             export const folders = [""];
+         "#;
+
+        let used_folders = LspParser::parse_code(source_code);
+        assert_eq!(1, used_folders.len());
+        assert_eq!("", used_folders[0].text);
     }
 }
