@@ -21,19 +21,25 @@ impl LspParser {
         Self::node_text(node, src)
     }
 
-    pub fn parse_code(source_code: &str) -> Vec<PositionalText> {
+    pub fn parse_code(source_code: &str, varname: &str) -> Vec<PositionalText> {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_typescript::language_typescript())
             .expect("Error loading typescript grammar");
         let tree = parser.parse(source_code, None).unwrap();
 
-        let user_query = r#"
+        let user_query = format!(
+            r#"
             (variable_declarator
-            name: ((identifier) @id (#eq? @id "folders"))
+            name: ((identifier) @id (#eq? @id "{varname}"))
             value: ((array ((string) @item))))
-        "#;
-        let query = Query::new(&tree_sitter_typescript::language_typescript(), user_query).unwrap();
+        "#
+        );
+        let query = Query::new(
+            &tree_sitter_typescript::language_typescript(),
+            user_query.as_str(),
+        )
+        .unwrap();
 
         let mut query_cursor = QueryCursor::new();
         let matches = query_cursor.matches(&query, tree.root_node(), source_code.as_bytes());
@@ -69,7 +75,7 @@ mod tests {
              export const other = ["other"];
          "#;
 
-        let used_folders = LspParser::parse_code(source_code);
+        let used_folders = LspParser::parse_code(source_code, "folders");
         assert_eq!(2, used_folders.len());
         assert_eq!("dir_a", used_folders[0].text);
         assert_eq!("dir_b", used_folders[1].text);
@@ -81,7 +87,7 @@ mod tests {
              export const folders = [""];
          "#;
 
-        let used_folders = LspParser::parse_code(source_code);
+        let used_folders = LspParser::parse_code(source_code, "folders");
         assert_eq!(1, used_folders.len());
         assert_eq!("", used_folders[0].text);
     }

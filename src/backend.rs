@@ -59,7 +59,7 @@ impl Backend {
     }
 
     fn perform_diagnostics(&self, source_code: &str) -> Vec<Diagnostic> {
-        let used_folders = LspParser::parse_code(source_code);
+        let used_folders = LspParser::parse_code(source_code, &self.args.varname);
         let available_folders = Backend::get_files(&self.args.suggestionsdir);
 
         used_folders
@@ -182,7 +182,8 @@ impl LanguageServer for Backend {
             }
         };
 
-        let all_items: Vec<crate::parser::PositionalText> = LspParser::parse_code(content);
+        let all_items: Vec<crate::parser::PositionalText> =
+            LspParser::parse_code(content, &self.args.varname);
         let all_completions = all_items
             .iter()
             .find(|item| {

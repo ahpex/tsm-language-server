@@ -14,9 +14,9 @@ pub struct CliArgs {
     #[arg(short, long, default_value = ".")]
     suggestionsdir: String,
 
-    /// Prefix to search for in code editor
-    #[arg(short, long, default_value = "xyz")]
-    prefix: String,
+    /// Variable name to trigger completion
+    #[arg(short, long, default_value = "folders")]
+    varname: String,
 
     #[arg(short, long)]
     stdio: bool, // Needed for LSP start
