@@ -120,7 +120,8 @@ impl LanguageServer for Backend {
             .capabilities
             .text_document
             .as_ref()
-            .map(|td| td.publish_diagnostics.is_some())
+            .unwrap()
+            .publish_diagnostics
             .is_some();
 
         {
@@ -132,13 +133,6 @@ impl LanguageServer for Backend {
             capabilities: ServerCapabilities {
                 completion_provider: Some(CompletionOptions::default()),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-                diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
-                    DiagnosticOptions {
-                        inter_file_dependencies: false,
-                        workspace_diagnostics: false,
-                        ..DiagnosticOptions::default()
-                    },
-                )),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
@@ -259,28 +253,6 @@ impl LanguageServer for Backend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let docs = self.documents.write();
         docs.unwrap().remove(&params.text_document.uri);
-    }
-
-    async fn diagnostic(
-        &self,
-        params: DocumentDiagnosticParams,
-    ) -> Result<DocumentDiagnosticReportResult> {
-        let docs = self.documents.read().unwrap();
-
-        let diagnostics = match docs.get(&params.text_document.uri) {
-            Some(source_code) => self.perform_diagnostics(source_code),
-            None => vec![],
-        };
-
-        return Ok(DocumentDiagnosticReportResult::Report(
-            DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
-                full_document_diagnostic_report: FullDocumentDiagnosticReport {
-                    items: diagnostics,
-                    ..FullDocumentDiagnosticReport::default()
-                },
-                ..RelatedFullDocumentDiagnosticReport::default()
-            }),
-        ));
     }
 
     async fn code_action(
